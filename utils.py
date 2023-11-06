@@ -113,9 +113,21 @@ def get_regions(img):
     regions = regionprops(label_image)
     return label_image, regions
 
+def latest_region(regions):
+    max_region = 0
+    for i, region in regions.keys():
+        if region > max_region:
+            max_region = region
+    return max_region
+
 def segmentate_matrix(matrix):
     found_regions = {}
-    for i in range(len(matrix)):
+    # for i in range(len(matrix)):
+    for i in range(5):
         labels, regions = segmentation(i, matrix)
-        found_regions[i] = [labels, regions]
-        break
+        max_region = latest_region(found_regions)
+        for region in regions:
+            labels[labels == region.label] = region.label + max_region
+            region.label = region.label + max_region
+            found_regions[(i, region.label)] = [labels, region]
+    print(found_regions)
