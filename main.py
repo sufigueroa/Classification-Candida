@@ -12,7 +12,4 @@ PATH = 'images/Low concentration 1.tiff'
 # Leer tiff y convertirlo en np.array
 im = read_tiff(PATH)
 
-# Interpolacion isotropica
-im = isotropic_interpolation(im)
-
 segmentate_matrix(im)
