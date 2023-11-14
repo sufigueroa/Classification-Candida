@@ -1,13 +1,10 @@
-from numpy import cos, sin
 import numpy as np
 import math
 from PIL import Image
 import cv2
-from skspatial.objects import Line, Plane, Vector
-from scipy.interpolate import interp1d
-from scipy.interpolate import RegularGridInterpolator
-from skimage.measure import label, regionprops
+from skimage.measure import regionprops
 from skimage.color import label2rgb
+from skimage.morphology import skeletonize
 from collections import deque
 
 
@@ -64,43 +61,30 @@ def isotropic_interpolation(matrix):
 
 ###################################################
 
-
-
 def equalize(matrix):
     max_value = np.max(matrix)
     return matrix / max_value * 255
 
 def initial_segmentation(img, umbral):
-    equalized = equalize(img)
-    segmented = (equalized > umbral) * 255
+    segmented = (img > umbral) * 255
+    # segmented = (img > np.median(img)) * 255
     return segmented.astype(np.uint8)
 
-# def denoise(img):
-#     k_first_erosion            = np.ones((3,3), np.uint8)
-#     k_first_dilation           = np.ones((2,2), np.uint8)
-#     k_second_dilation          = np.ones((15,15), np.uint8)
-#     k_second_erosion           = np.ones((9,9), np.uint8)
-
-#     img_dilation = cv2.dilate(img, k_first_dilation) 
-#     img_erosion = cv2.erode(img, k_first_erosion)
-#     img_dilation = cv2.dilate(img_erosion, k_second_dilation) 
-#     img_erosion = cv2.erode(img_dilation, k_second_erosion)
-#     return img_erosion
-
 def denoise(img):
-    k_first_erosion            = np.ones((5,5), np.uint8)
-    k_first_dilation           = np.ones((5,5), np.uint8)
+    k_first_erosion            = np.ones((3,3), np.uint8)
+    k_first_dilation           = np.ones((2,2), np.uint8)
+    k_second_dilation          = np.ones((15,15), np.uint8)
+    k_second_erosion           = np.ones((9,9), np.uint8)
 
     img_dilation = cv2.dilate(img, k_first_dilation) 
-    img_erosion = cv2.erode(img_dilation, k_first_erosion)
+    img_erosion = cv2.erode(img, k_first_erosion)
+    img_dilation = cv2.dilate(img_erosion, k_second_dilation) 
+    img_erosion = cv2.erode(img_dilation, k_second_erosion)
     return img_erosion
 
 def get_mask(index, matrix, OR=True):   
-    segmented = initial_segmentation(matrix[index], 45)
-    save_image(segmented, f'results/seg_{index}.png')
-    mask = denoise(segmented)
-    save_image(mask, f'results/denoise_{index}.png')
-    return mask
+    segmented = initial_segmentation(matrix[index], 40)
+    return denoise(segmented)
 
 def segmentation(index, matrix, save=False):
     if save: save_image(matrix[index], f'{PATH}normal_{index}.png')
@@ -145,15 +129,84 @@ def region_growing3D(matrix):
                     region += 1
     return bitmap
 
+def get_props_per_region(regions_found):
+    props_dict = {i+1: {"area": 0, "eccentricity": [], "perimeter": 0} for i in range(int(np.max(regions_found)))}
+    for found_region in regions_found.astype(np.uint8):
+        for region in regionprops(found_region):
+            region_id = region.label
+            props_dict[region_id]["area"] += region.area
+            props_dict[region_id]["perimeter"] += region.perimeter
+            props_dict[region_id]["eccentricity"].append(region.eccentricity)
+    return props_dict
+
+def remove_noise(regions_found, props_dict):
+    to_delete = []
+    for region in props_dict.keys():
+        if props_dict[region]["area"] < 100:
+            regions_found[regions_found == region] = 0
+            to_delete.append(region)
+    for region in to_delete: del props_dict[region]
+    return regions_found
+
+def classification(regions_found, props_dict):
+    spores = np.zeros(regions_found.shape)
+    hifas = np.zeros(regions_found.shape)
+    spore_count = 0
+    hifas_count = 0
+    hifas_labels = []
+
+    for region in props_dict.keys():
+        rate = props_dict[region]["area"] / props_dict[region]["perimeter"]
+        if np.mean(props_dict[region]["eccentricity"]) > 0.7 and props_dict[region]["area"] > 150000:
+            hifas[regions_found == region] = 1
+            hifas_count += 1
+            hifas_labels.append(region)
+        else:
+            spores[regions_found == region] = 1
+            spore_count += 1
+    print(f"Hay {spore_count} esporas y {hifas_count} esporas con hifas")
+    return spores, hifas, hifas_labels
+
+def colorize_image(segmentated, regions_found, path):
+    for h in range(regions_found.shape[0]):
+        mask = segmentated[h]
+        img = regions_found[h].astype(np.int64)
+        colorized = label2rgb(img, image=mask, bg_label=0)
+        colorized = equalize(colorized).astype(np.uint8)
+        save_rgb_image(colorized, f'results/{path}_{h}.png')
+
+def skeletonize_image(image):
+    skeleton = skeletonize(image)
+    # save_image(skeleton_label*255, f'results/hifas.png')
+    return skeleton
+
+def get_length(image):
+    skeleton = skeletonize_image(image)
+    total_area = 0
+    for region in regionprops(skeleton.astype(np.uint8)):
+        total_area += region.perimeter
+    return total_area
+
+def separate_hifas_length(hifas, hifas_labels):
+    length_dict = {label : 0 for label in hifas_labels}
+    for hifa_label in hifas_labels:
+        for h in range(len(hifas)):
+            hifa = np.zeros(hifas[h].shape)
+            hifa[hifas[h] == hifa_label] = 1
+            length = get_length(hifa)
+            if length > length_dict[hifa_label]:
+                length_dict[hifa_label] = int(length)
+    return length_dict
+
 
 def segmentate_matrix(matrix):
     segmentated = []
     for i in range(matrix.shape[0]):
         segmentated.append(segmentation(i, matrix))
     regions_found = region_growing3D(np.array(segmentated))
-    for h in range(matrix.shape[0]):
-        mask = segmentated[h]
-        img = regions_found[h].astype(np.int64)
-        colorized = label2rgb(img, image=mask, bg_label=0)
-        colorized = equalize(colorized).astype(np.uint8)
-        save_rgb_image(colorized, f'results/colorized_{h}.png')
+    props_dict = get_props_per_region(regions_found)
+    regions_found = remove_noise(regions_found, props_dict)
+    spores, hifas, hifas_labels = classification(regions_found, props_dict)
+    print(separate_hifas_length(regions_found, hifas_labels))
+    # colorize_image(segmentated, spores, "low_spores")
+    # colorize_image(segmentated, hifas, "low_hifas")
