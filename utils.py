@@ -67,7 +67,7 @@ def equalize(matrix):
 
 def initial_segmentation(img, umbral):
     segmented = (img > umbral) * 255
-    # segmented = (img > np.median(img)) * 255
+    #segmented = (img > np.median(img)) * 255
     return segmented.astype(np.uint8)
 
 def denoise(img):
@@ -193,9 +193,9 @@ def separate_hifas_length(hifas, hifas_labels):
         for h in range(len(hifas)):
             hifa = np.zeros(hifas[h].shape)
             hifa[hifas[h] == hifa_label] = 1
-            length = get_length(hifa)
+            length = get_length(hifa) * 0.12
             if length > length_dict[hifa_label]:
-                length_dict[hifa_label] = int(length)
+                length_dict[hifa_label] = int(length) 
     return length_dict
 
 
@@ -208,5 +208,5 @@ def segmentate_matrix(matrix):
     regions_found = remove_noise(regions_found, props_dict)
     spores, hifas, hifas_labels = classification(regions_found, props_dict)
     print(separate_hifas_length(regions_found, hifas_labels))
-    # colorize_image(segmentated, spores, "low_spores")
-    # colorize_image(segmentated, hifas, "low_hifas")
+    # colorize_image(segmentated, spores, "high_spores")
+    # colorize_image(segmentated, hifas, "high_hifas")
